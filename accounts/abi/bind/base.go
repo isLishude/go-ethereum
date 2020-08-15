@@ -54,6 +54,8 @@ type TransactOpts struct {
 	GasLimit uint64   // Gas limit to set for the transaction execution (0 = estimate)
 
 	Context context.Context // Network context to support cancellation and timeouts (nil = no timeout)
+
+	ChainID *big.Int // ChainID for EIP155 (nil = try to get by rpc if it implements `ChainID() (*big.Int error)`)
 }
 
 // FilterOpts is the collection of options to fine tune filtering for events
@@ -246,7 +248,25 @@ func (c *BoundContract) transact(opts *TransactOpts, contract *common.Address, i
 	if opts.Signer == nil {
 		return nil, errors.New("no signer to authorize the transaction with")
 	}
-	signedTx, err := opts.Signer(types.HomesteadSigner{}, opts.From, rawTx)
+
+	chainID := opts.ChainID
+	if chainID == nil {
+		if cg, ok := c.transactor.(interface {
+			ChainID(ctx context.Context) (*big.Int, error)
+		}); ok {
+			chainID, err = cg.ChainID(ensureContext(opts.Context))
+			if err != nil {
+				return nil, fmt.Errorf("failed to get chainID: %w", err)
+			}
+		}
+	}
+
+	var signedTx *types.Transaction
+	if chainID != nil {
+		signedTx, err = opts.Signer(types.NewEIP155Signer(chainID), opts.From, rawTx)
+	} else {
+		signedTx, err = opts.Signer(types.HomesteadSigner{}, opts.From, rawTx)
+	}
 	if err != nil {
 		return nil, err
 	}
